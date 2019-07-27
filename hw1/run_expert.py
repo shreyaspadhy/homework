@@ -7,15 +7,17 @@ Example usage:
             --num_rollouts 20
 
 Author of this script and included expert policies: Jonathan Ho (hoj@openai.com)
+
+Changes made to make compatible with TF 2.0 and gym 12.x: Shreyas Padhy (shreyaspadhy@gmail.com)
 """
 
 import os
 import pickle
 import tensorflow as tf
 import numpy as np
-import tf_util
 import gym
 import load_policy
+
 
 def main():
     import argparse
@@ -32,45 +34,46 @@ def main():
     policy_fn = load_policy.load_policy(args.expert_policy_file)
     print('loaded and built')
 
-    with tf.Session():
-        tf_util.initialize()
+    env = gym.make(args.envname)
+    max_steps = args.max_timesteps or env.spec.max_episode_steps
 
-        import gym
-        env = gym.make(args.envname)
-        max_steps = args.max_timesteps or env.spec.timestep_limit
+    returns = []
+    observations = []
+    actions = []
 
-        returns = []
-        observations = []
-        actions = []
-        for i in range(args.num_rollouts):
-            print('iter', i)
-            obs = env.reset()
-            done = False
-            totalr = 0.
-            steps = 0
-            while not done:
-                action = policy_fn(obs[None,:])
-                observations.append(obs)
-                actions.append(action)
-                obs, r, done, _ = env.step(action)
-                totalr += r
-                steps += 1
-                if args.render:
-                    env.render()
-                if steps % 100 == 0: print("%i/%i"%(steps, max_steps))
-                if steps >= max_steps:
-                    break
-            returns.append(totalr)
+    for i in range(args.num_rollouts):
+        print('iter', i)
+        obs = env.reset()
+        done = False
+        tot_reward = 0.
+        steps = 0
+        while not done:
 
-        print('returns', returns)
-        print('mean return', np.mean(returns))
-        print('std of return', np.std(returns))
+            action = policy_fn(obs[None, :].astype('float32'))
+            observations.append(obs)
+            actions.append(action)
+            obs, reward, done, _ = env.step(action)
+            tot_reward += reward
+            steps += 1
+            if args.render:
+                env.render()
+            if steps % 100 == 0:
+                print("%i/%i" % (steps, max_steps))
+            if steps >= max_steps:
+                break
+        returns.append(tot_reward)
 
-        expert_data = {'observations': np.array(observations),
-                       'actions': np.array(actions)}
+    print('returns', returns)
+    print('mean return', np.mean(returns))
+    print('std of return', np.std(returns))
 
-        with open(os.path.join('expert_data', args.envname + '.pkl'), 'wb') as f:
-            pickle.dump(expert_data, f, pickle.HIGHEST_PROTOCOL)
+    expert_data = {'observations': np.array(observations),
+                   'actions': np.array(actions)}
+
+    os.makedirs('expert_data', exist_ok=True)
+    with open(os.path.join('expert_data', args.envname + '_{}_eps.pkl'.format(args.num_rollouts)), 'wb') as f:
+        pickle.dump(expert_data, f, pickle.HIGHEST_PROTOCOL)
+
 
 if __name__ == '__main__':
     main()

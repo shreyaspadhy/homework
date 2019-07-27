@@ -1,4 +1,7 @@
-import pickle, tensorflow as tf, tf_util, numpy as np
+import pickle
+import tensorflow as tf
+import numpy as np
+
 
 def load_policy(filename):
     with open(filename, 'rb') as f:
@@ -15,15 +18,18 @@ def load_policy(filename):
 
     # Keep track of input and output dims (i.e. observation and action dims) for the user
 
-    def build_policy(obs_bo):
+    # build_policy functions as forward pass that takes obs -> action
+
+    def build_policy(obs):
         def read_layer(l):
+            # Returns 'W' and 'b' from a layer
             assert list(l.keys()) == ['AffineLayer']
             assert sorted(l['AffineLayer'].keys()) == ['W', 'b']
             return l['AffineLayer']['W'].astype(np.float32), l['AffineLayer']['b'].astype(np.float32)
 
         def apply_nonlin(x):
             if nonlin_type == 'lrelu':
-                return tf_util.lrelu(x, leak=.01) # openai/imitation nn.py:233
+                return tf.nn.lrelu(x, leak=.01)  # openai/imitation nn.py:233
             elif nonlin_type == 'tanh':
                 return tf.tanh(x)
             else:
@@ -34,10 +40,11 @@ def load_policy(filename):
         obsnorm_mean = policy_params['obsnorm']['Standardizer']['mean_1_D']
         obsnorm_meansq = policy_params['obsnorm']['Standardizer']['meansq_1_D']
         obsnorm_stdev = np.sqrt(np.maximum(0, obsnorm_meansq - np.square(obsnorm_mean)))
-        print('obs', obsnorm_mean.shape, obsnorm_stdev.shape)
-        normedobs_bo = (obs_bo - obsnorm_mean) / (obsnorm_stdev + 1e-6) # 1e-6 constant from Standardizer class in nn.py:409 in openai/imitation
+        # print('obs', obsnorm_mean.shape, obsnorm_stdev.shape)
+        # 1e-6 constant from Standardizer class in nn.py:409 in openai/imitation
+        normed_obs = (obs - obsnorm_mean) / (obsnorm_stdev + 1e-6)
 
-        curr_activations_bd = normedobs_bo
+        h = normed_obs
 
         # Hidden layers next
         assert list(policy_params['hidden'].keys()) == ['FeedforwardNet']
@@ -45,14 +52,11 @@ def load_policy(filename):
         for layer_name in sorted(layer_params.keys()):
             l = layer_params[layer_name]
             W, b = read_layer(l)
-            curr_activations_bd = apply_nonlin(tf.matmul(curr_activations_bd, W) + b)
+            h = apply_nonlin(tf.matmul(h, W) + b)
 
         # Output layer
         W, b = read_layer(policy_params['out'])
-        output_bo = tf.matmul(curr_activations_bd, W) + b
-        return output_bo
+        actions = tf.matmul(h, W) + b
+        return actions
 
-    obs_bo = tf.placeholder(tf.float32, [None, None])
-    a_ba = build_policy(obs_bo)
-    policy_fn = tf_util.function([obs_bo], a_ba)
-    return policy_fn
+    return tf.function(build_policy)
